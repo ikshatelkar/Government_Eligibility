@@ -1,6 +1,6 @@
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { CheckSquare, FileText, BookOpen, BarChart2, ArrowRight, Shield } from 'lucide-react';
+import { CheckSquare, BookOpen, BarChart2, ArrowRight, Shield } from 'lucide-react';
 
 const actions = [
   {
@@ -16,13 +16,6 @@ const actions = [
     label: 'Browse Programs',
     desc: 'Explore all available government programs',
     color: 'bg-indigo-500',
-  },
-  {
-    to: '/applications',
-    icon: FileText,
-    label: 'My Applications',
-    desc: 'Track your submitted benefit applications',
-    color: 'bg-violet-500',
   },
   {
     to: '/results',

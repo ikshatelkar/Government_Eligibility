@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { eligibilityApi, programsApi, applicationsApi } from '../services/api';
+import { eligibilityApi, programsApi } from '../services/api';
 import { toast } from 'sonner';
-import { CheckCircle, XCircle, Loader2, ChevronDown, Send } from 'lucide-react';
+import { CheckCircle, XCircle, Loader2, ChevronDown } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 
 interface EligibilityResult {
@@ -20,6 +20,7 @@ interface AllResult {
   is_eligible: boolean;
   official_link?: string;
   state?: string;
+  documents_required?: string;
 }
 
 export default function CheckEligibilityPage() {
@@ -29,7 +30,6 @@ export default function CheckEligibilityPage() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<EligibilityResult | null>(null);
   const [allResults, setAllResults] = useState<AllResult[]>([]);
-  const [applying, setApplying] = useState<number | null>(null);
 
   const [form, setForm] = useState({
     age: '',
@@ -87,18 +87,6 @@ export default function CheckEligibilityPage() {
       toast.error(err.message || 'Check failed. Is the backend running?');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleApply = async (programId: number) => {
-    setApplying(programId);
-    try {
-      await applicationsApi.submit(programId, token!);
-      toast.success('Application submitted successfully!');
-    } catch (err: any) {
-      toast.error(err.message);
-    } finally {
-      setApplying(null);
     }
   };
 
@@ -325,16 +313,6 @@ export default function CheckEligibilityPage() {
               View Official Scheme →
             </a>
           )}
-          {result.is_eligible && result.program_id && (
-            <button
-              onClick={() => handleApply(result.program_id!)}
-              disabled={applying === result.program_id}
-              className="mt-4 flex items-center gap-2 px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors disabled:opacity-60"
-            >
-              {applying === result.program_id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-              Apply Now
-            </button>
-          )}
         </div>
       )}
 
@@ -357,27 +335,39 @@ export default function CheckEligibilityPage() {
               </div>
               <div className="space-y-3">
                 {allResults.filter(r => r.is_eligible).map(r => (
-                  <div key={r.program_id} className="flex items-center justify-between bg-white rounded-lg border border-green-200 px-4 py-3 hover:shadow-sm transition-shadow">
-                    <div>
-                      <p className="text-sm font-medium text-gray-900">{r.program_name}</p>
-                      <p className="text-xs text-gray-500 mt-0.5">{r.category}{r.state && r.state !== 'All India' ? ` · ${r.state}` : ''}</p>
-                      {r.official_link && (
-                        <a href={r.official_link} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">Apply Online →</a>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-3 flex-shrink-0">
-                      <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-100 px-2.5 py-1 rounded-full">
+                  <div key={r.program_id} className="bg-white rounded-lg border border-green-200 px-4 py-3 hover:shadow-sm transition-shadow">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">{r.program_name}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">{r.category}{r.state && r.state !== 'All India' ? ` · ${r.state}` : ''}</p>
+                      {r.official_link && (() => {
+                        const link = r.official_link.startsWith('http') ? r.official_link : `https://${r.official_link.replace(/^\/+/, '')}`;
+                        return <a href={link} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">Apply Online →</a>;
+                      })()}
+                      </div>
+                      <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-100 px-2.5 py-1 rounded-full flex-shrink-0 ml-3">
                         <CheckCircle className="w-3 h-3" /> Eligible
                       </span>
-                      <button
-                        onClick={() => handleApply(r.program_id)}
-                        disabled={applying === r.program_id}
-                        className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 disabled:opacity-60 transition-colors"
-                      >
-                        {applying === r.program_id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
-                        Apply
-                      </button>
                     </div>
+                    {r.documents_required && (() => {
+                      try {
+                        const docs: string[] = JSON.parse(r.documents_required);
+                        if (docs.length === 0) return null;
+                        return (
+                          <div className="mt-2 pt-2 border-t border-gray-100">
+                            <p className="text-xs font-semibold text-gray-600 mb-1.5">Documents required to apply:</p>
+                            <ul className="space-y-1">
+                              {docs.map((doc, i) => (
+                                <li key={i} className="flex items-start gap-1.5 text-xs text-gray-600">
+                                  <span className="mt-1 w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
+                                  {doc}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        );
+                      } catch { return null; }
+                    })()}
                   </div>
                 ))}
               </div>

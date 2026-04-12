@@ -41,14 +41,6 @@ export const eligibilityApi = {
     fetch(`${BASE_URL}/eligibility/results`, { headers: getHeaders(token) }).then(handleResponse),
 };
 
-export const applicationsApi = {
-  submit: (program_id: number, token: string) =>
-    fetch(`${BASE_URL}/applications`, { method: 'POST', headers: getHeaders(token), body: JSON.stringify({ program_id }) }).then(handleResponse),
-
-  getMy: (token: string) =>
-    fetch(`${BASE_URL}/applications/my`, { headers: getHeaders(token) }).then(handleResponse),
-};
-
 export const profileApi = {
   get: (token: string) =>
     fetch(`${BASE_URL}/profile`, { headers: getHeaders(token) }).then(handleResponse),

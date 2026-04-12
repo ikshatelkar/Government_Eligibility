@@ -2,7 +2,7 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import {
   LayoutDashboard, CheckSquare, BookOpen,
-  FileText, BarChart2, User, LogOut, Menu, X, Shield
+  BarChart2, User, LogOut, Menu, X, Shield
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -10,7 +10,6 @@ const navItems = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/check', label: 'Check Eligibility', icon: CheckSquare },
   { to: '/programs', label: 'Programs', icon: BookOpen },
-  { to: '/applications', label: 'Applications', icon: FileText },
   { to: '/results', label: 'My Results', icon: BarChart2 },
   { to: '/profile', label: 'Profile', icon: User },
 ];

@@ -1,17 +1,17 @@
 """
-MyScheme API Import Script
-Fetches Indian government schemes from myscheme.gov.in API
-and inserts new schemes into the MySQL database (skips duplicates).
+Weekly Scheme Restore Script
+Runs every Saturday - wipes all existing schemes from the database
+and performs a full fresh import from the MyScheme API.
 
 Usage:
-    python fetch_schemes.py
+    python restore_schemes.py
 
-Requirements:
-    pip install requests mysql-connector-python python-dotenv
+Scheduled automatically by Windows Task Scheduler (setup_scheduler.ps1).
 """
 
 import os
 import sys
+import json
 import time
 import logging
 import requests
@@ -24,7 +24,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), '..', 'backend', '.env'))
 LOG_DIR = os.path.join(os.path.dirname(__file__), 'logs')
 os.makedirs(LOG_DIR, exist_ok=True)
 
-log_file = os.path.join(LOG_DIR, f"daily_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+log_file = os.path.join(LOG_DIR, f"restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
@@ -190,7 +190,6 @@ def extract_scheme_data(scheme):
                 label = doc.get('documentName', '') or doc.get('name', '') or doc.get('label', '')
                 if label:
                     doc_list.append(label.strip())
-        # Always ensure Aadhaar is listed
         if not any('aadhaar' in d.lower() for d in doc_list):
             doc_list.insert(0, 'Aadhaar Card')
         documents_required = json.dumps(doc_list) if doc_list else None
@@ -219,7 +218,7 @@ def extract_scheme_data(scheme):
 
 def insert_scheme(cursor, scheme_data):
     sql = """
-        INSERT IGNORE INTO programs
+        INSERT INTO programs
           (name, description, category, min_age, max_age, min_income, max_income,
            employment_status, disability_required, citizenship_required,
            gender, caste, state, official_link, documents_required)
@@ -239,7 +238,7 @@ def insert_scheme(cursor, scheme_data):
 
 def main():
     log.info("=" * 60)
-    log.info("DAILY UPDATE — MyScheme API Import")
+    log.info("WEEKLY RESTORE — MyScheme Full Re-Import")
     log.info(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     log.info("=" * 60)
 
@@ -249,11 +248,16 @@ def main():
         log.info(f"Connected to MySQL: {DB_CONFIG['database']}")
     except Exception as e:
         log.error(f"MySQL connection failed: {e}")
-        log.error("Make sure your backend/.env has correct DB credentials.")
         sys.exit(1)
 
+    # Wipe all existing schemes before fresh import
+    log.info("Wiping existing schemes from 'programs' table...")
+    cursor.execute("DELETE FROM programs")
+    conn.commit()
+    log.info("Table cleared. Starting full re-import...")
+
     total_inserted = 0
-    total_skipped = 0
+    total_failed = 0
     page = 0
     max_pages = 20
 
@@ -267,7 +271,7 @@ def main():
 
         schemes = data.get('data', {}).get('schemes', []) or data.get('schemes', []) or []
         if not schemes:
-            log.info("No more schemes found.")
+            log.info("No more schemes found. Import complete.")
             break
 
         log.info(f"  Got {len(schemes)} schemes from API")
@@ -277,16 +281,13 @@ def main():
             if parsed:
                 try:
                     insert_scheme(cursor, parsed)
-                    if cursor.rowcount > 0:
-                        total_inserted += 1
-                    else:
-                        total_skipped += 1
+                    total_inserted += 1
                 except Exception as e:
                     log.warning(f"  Insert error for '{parsed.get('name', 'unknown')}': {e}")
-                    total_skipped += 1
+                    total_failed += 1
 
         conn.commit()
-        log.info(f"  Committed. Running total: {total_inserted} inserted, {total_skipped} skipped")
+        log.info(f"  Committed. Running total: {total_inserted} inserted, {total_failed} failed")
         page += 1
         time.sleep(0.5)
 
@@ -294,9 +295,9 @@ def main():
     conn.close()
 
     log.info("\n" + "=" * 60)
-    log.info("DAILY UPDATE COMPLETE")
+    log.info("RESTORE COMPLETE")
     log.info(f"  Total inserted : {total_inserted}")
-    log.info(f"  Total skipped  : {total_skipped} (duplicates or parse errors)")
+    log.info(f"  Total failed   : {total_failed}")
     log.info(f"  Log saved to   : {log_file}")
     log.info("=" * 60)
 

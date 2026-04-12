@@ -7,7 +7,6 @@ const morgan = require('morgan');
 const authRoutes = require('./routes/auth.routes');
 const programRoutes = require('./routes/program.routes');
 const eligibilityRoutes = require('./routes/eligibility.routes');
-const applicationRoutes = require('./routes/application.routes');
 const profileRoutes = require('./routes/profile.routes');
 
 const app = express();
@@ -31,7 +30,6 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/api/auth', authRoutes);
 app.use('/api/programs', programRoutes);
 app.use('/api/eligibility', eligibilityRoutes);
-app.use('/api/applications', applicationRoutes);
 app.use('/api/profile', profileRoutes);
 
 app.get('/api/health', (req, res) => {

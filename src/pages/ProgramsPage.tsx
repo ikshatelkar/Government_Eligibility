@@ -1,7 +1,39 @@
 import { useAuth } from '../context/AuthContext';
 import { programsApi } from '../services/api';
 import { useQuery } from '@tanstack/react-query';
-import { BookOpen, Users, DollarSign, Briefcase } from 'lucide-react';
+import { BookOpen, Users, DollarSign, Briefcase, FileText, ExternalLink } from 'lucide-react';
+
+function DocumentList({ raw }: { raw: string | null }) {
+  if (!raw) return null;
+  let docs: string[] = [];
+  try { docs = JSON.parse(raw); } catch { return null; }
+  if (docs.length === 0) return null;
+
+  return (
+    <div className="mt-3 pt-3 border-t border-gray-100">
+      <div className="flex items-center gap-1.5 mb-2">
+        <FileText className="w-3.5 h-3.5 text-gray-500" />
+        <p className="text-xs font-semibold text-gray-700">Documents Required to Apply</p>
+      </div>
+      <ul className="space-y-1">
+        {docs.map((doc, i) => (
+          <li key={i} className="flex items-start gap-1.5 text-xs text-gray-600">
+            <span className="mt-1 w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
+            {doc}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function safeLink(url: string | null): string | null {
+  if (!url) return null;
+  const trimmed = url.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+  return `https://${trimmed}`;
+}
 
 export default function ProgramsPage() {
   const { token } = useAuth();
@@ -79,12 +111,14 @@ export default function ProgramsPage() {
                 )}
               </div>
             )}
-            {p.official_link && (
-              <a href={p.official_link} target="_blank" rel="noopener noreferrer"
-                className="mt-3 block text-xs text-blue-600 hover:underline">
-                Official Website →
+            {safeLink(p.official_link) && (
+              <a href={safeLink(p.official_link)!} target="_blank" rel="noopener noreferrer"
+                className="mt-3 inline-flex items-center gap-1 text-xs text-blue-600 hover:underline font-medium">
+                <ExternalLink className="w-3 h-3" />
+                Official Website
               </a>
             )}
+            <DocumentList raw={p.documents_required} />
           </div>
         ))}
       </div>

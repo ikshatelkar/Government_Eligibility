@@ -99,6 +99,11 @@ const fallbackEligibilityCheck = (program, data) => {
   if (program.gender !== 'any' && gender && gender !== program.gender) return false;
   if (program.caste !== 'any' && caste && caste !== program.caste) return false;
 
+  // Category-level safety: Women & Child schemes are female-only even if DB gender is 'any'
+  if (program.category === 'Women & Child' && gender && gender !== 'female') return false;
+  // Disability Support schemes require disability even if DB flag missed it
+  if (program.category === 'Disability Support' && !has_disability) return false;
+
   return true;
 };
 
@@ -131,6 +136,7 @@ const checkAllPrograms = async (req, res) => {
       category: program.category,
       official_link: program.official_link,
       state: program.state,
+      documents_required: program.documents_required,
       is_eligible: fallbackEligibilityCheck(program, citizenData),
     }));
 

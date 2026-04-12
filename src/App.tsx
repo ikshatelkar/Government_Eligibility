@@ -11,7 +11,6 @@ import RegisterPage from './pages/RegisterPage';
 import DashboardPage from './pages/DashboardPage';
 import CheckEligibilityPage from './pages/CheckEligibilityPage';
 import ProgramsPage from './pages/ProgramsPage';
-import ApplicationsPage from './pages/ApplicationsPage';
 import ProfilePage from './pages/ProfilePage';
 import ResultsPage from './pages/ResultsPage';
 
@@ -31,7 +30,6 @@ export default function App() {
                 <Route path="/dashboard" element={<DashboardPage />} />
                 <Route path="/check" element={<CheckEligibilityPage />} />
                 <Route path="/programs" element={<ProgramsPage />} />
-                <Route path="/applications" element={<ApplicationsPage />} />
                 <Route path="/results" element={<ResultsPage />} />
                 <Route path="/profile" element={<ProfilePage />} />
               </Route>
