@@ -86,23 +86,103 @@ const checkEligibility = async (req, res) => {
 };
 
 const fallbackEligibilityCheck = (program, data) => {
-  const { age, income, employment_status, occupation, has_disability, is_citizen, gender, caste } = data;
+  const { age, income, employment_status, occupation, has_disability, is_citizen, gender, caste, state } = data;
 
   if (program.citizenship_required && !is_citizen) return false;
   if (program.disability_required && !has_disability) return false;
-  if (program.min_age && age < program.min_age) return false;
-  if (program.max_age && age > program.max_age) return false;
-  if (program.min_income && income < program.min_income) return false;
-  if (program.max_income && income > program.max_income) return false;
+
+  // Only apply age bounds when they are explicitly set (not at their defaults of 0 / 120)
+  if (program.min_age > 0 && age < program.min_age) return false;
+  if (program.max_age < 120 && age > program.max_age) return false;
+
+  if (program.min_income > 0 && income < program.min_income) return false;
+  if (program.max_income < 99999999 && income > program.max_income) return false;
   if (program.employment_status !== 'any' && employment_status !== program.employment_status) return false;
   if (program.required_occupation && program.required_occupation !== 'any' && occupation !== program.required_occupation) return false;
   if (program.gender !== 'any' && gender && gender !== program.gender) return false;
   if (program.caste !== 'any' && caste && caste !== program.caste) return false;
 
+  // ── State filter ──────────────────────────────────────────────────────────
+  // If the scheme is state-specific, only show it to users from that state
+  // (or users who selected "All India" to see everything).
+  if (
+    program.state &&
+    program.state !== 'All India' &&
+    state &&
+    state !== 'All India' &&
+    program.state.toLowerCase().trim() !== state.toLowerCase().trim()
+  ) return false;
+
   // Category-level safety: Women & Child schemes are female-only even if DB gender is 'any'
   if (program.category === 'Women & Child' && gender && gender !== 'female') return false;
   // Disability Support schemes require disability even if DB flag missed it
   if (program.category === 'Disability Support' && !has_disability) return false;
+
+  // ── Keyword-based age safety for schemes where DB age defaults (0–120) were stored ──
+  // These catch cases where the eligibility text had no explicit age numbers to parse.
+  const schemeText = ((program.name || '') + ' ' + (program.description || '')).toLowerCase();
+
+  // Category-level rule: Education schemes without explicit age bounds are for students/young adults
+  if (
+    program.category === 'Education' &&
+    program.min_age === 0 && program.max_age === 120 &&
+    age > 35
+  ) return false;
+
+  // School / student / education-loan schemes
+  if (
+    program.min_age === 0 && program.max_age === 120 &&
+    /\bstudent\b|\bschool\b|\b10th\b|\b11th\b|\b12th\b|\bsslc\b|\bhsc\b|\bmatric\b|\bscholarship\b|\beducation loan\b|\bloan subsidy\b|\bfellowship\b|\bundergraduate\b|\bpostgraduate\b|\bcollege\b|\buniversity\b|\bexamination\b|\bacademic\b|\btuition\b/.test(schemeText) &&
+    age > 35
+  ) return false;
+
+  // Campus recruitment / placement schemes — for fresh graduates / young job seekers
+  if (
+    program.max_age === 120 &&
+    /campus recruitment|campus placement|campus assistance|fresh graduate|fresher/.test(schemeText) &&
+    age > 40
+  ) return false;
+
+  // Apprenticeship / internship / trainee schemes
+  if (
+    program.max_age === 120 &&
+    /\bapprenticeship\b|\binternship\b|\btrainee\b/.test(schemeText) &&
+    age > 35
+  ) return false;
+
+  // Child / juvenile welfare schemes
+  if (
+    program.max_age === 120 &&
+    /\bchild\b|\bchildren\b|\bjuvenile\b|\borphan\b/.test(schemeText) &&
+    age > 18
+  ) return false;
+
+  // Schemes explicitly for senior citizens / old age
+  if (
+    program.min_age === 0 &&
+    /senior citizen|old age|elderly|aged person/.test(schemeText) &&
+    age < 60
+  ) return false;
+
+  // Widow / widower — only applicable after typical adult age
+  if (
+    /\bwidow\b|\bwidower\b/.test(schemeText) &&
+    age < 18
+  ) return false;
+
+  // Maternity / pregnancy schemes — reproductive age range
+  if (
+    program.max_age === 120 &&
+    /\bmaternity\b|\bpregnant\b|\bpregnancy\b|\bnursing mother\b/.test(schemeText) &&
+    (age < 15 || age > 55)
+  ) return false;
+
+  // Schemes for new/young entrepreneurs — usually target working-age adults
+  if (
+    program.max_age === 120 &&
+    /young entrepreneur|youth entrepreneurship/.test(schemeText) &&
+    age > 45
+  ) return false;
 
   return true;
 };

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { eligibilityApi, programsApi } from '../services/api';
 import { toast } from 'sonner';
-import { CheckCircle, XCircle, Loader2, ChevronDown } from 'lucide-react';
+import { CheckCircle, XCircle, Loader2, ChevronDown, Trophy, ChevronUp, List } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 
 interface EligibilityResult {
@@ -30,6 +30,7 @@ export default function CheckEligibilityPage() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<EligibilityResult | null>(null);
   const [allResults, setAllResults] = useState<AllResult[]>([]);
+  const [showAll, setShowAll] = useState(false);
 
   const [form, setForm] = useState({
     age: '',
@@ -60,6 +61,7 @@ export default function CheckEligibilityPage() {
     setLoading(true);
     setResult(null);
     setAllResults([]);
+    setShowAll(false);
 
     try {
       const payload = {
@@ -317,64 +319,141 @@ export default function CheckEligibilityPage() {
       )}
 
       {/* All results */}
-      {allResults.length > 0 && (
-        <div className="mt-6">
-          {allResults.filter(r => r.is_eligible).length === 0 ? (
-            <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
+      {allResults.length > 0 && (() => {
+        const eligible = allResults.filter(r => r.is_eligible);
+
+        // Score each eligible scheme by likely benefit impact
+        const scoreScheme = (r: AllResult): number => {
+          let score = 0;
+          const text = ((r.program_name || '') + ' ' + (r.category || '')).toLowerCase();
+          // Financial benefit keywords
+          if (/stipend|pension|scholarship|assistance|subsidy|grant|compensation|allowance|insurance/.test(text)) score += 40;
+          // High-impact categories
+          if (['Health', 'Housing', 'Education'].includes(r.category)) score += 20;
+          if (['Financial Inclusion', 'Disability Support'].includes(r.category)) score += 15;
+          // Has documents (scheme is actionable and detailed)
+          if (r.documents_required) score += 15;
+          // State-specific is more targeted / valuable
+          if (r.state && r.state !== 'All India') score += 10;
+          // Has an official link
+          if (r.official_link) score += 5;
+          return score;
+        };
+
+        const scored = [...eligible].sort((a, b) => scoreScheme(b) - scoreScheme(a));
+        const top5 = scored.slice(0, 5);
+        const rest = scored.slice(5);
+
+        const rankEmojis = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'];
+
+        const SchemeCard = ({ r, rank }: { r: AllResult; rank?: number }) => {
+          const link = r.official_link
+            ? (r.official_link.startsWith('http') ? r.official_link : `https://${r.official_link.replace(/^\/+/, '')}`)
+            : null;
+          let docs: string[] = [];
+          if (r.documents_required) {
+            try { docs = JSON.parse(r.documents_required); } catch { docs = []; }
+          }
+          return (
+            <div className={`bg-white rounded-lg border px-4 py-3 hover:shadow-sm transition-shadow ${rank !== undefined ? 'border-amber-200' : 'border-green-200'}`}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-2 min-w-0">
+                  {rank !== undefined && (
+                    <span className="text-base leading-none mt-0.5 flex-shrink-0">{rankEmojis[rank]}</span>
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-900 leading-snug">{r.program_name}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {r.category}{r.state && r.state !== 'All India' ? ` · ${r.state}` : ''}
+                    </p>
+                    {link && (
+                      <a href={link} target="_blank" rel="noopener noreferrer"
+                        className="text-xs text-blue-600 hover:underline">
+                        Apply Online →
+                      </a>
+                    )}
+                  </div>
+                </div>
+                <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-100 px-2.5 py-1 rounded-full flex-shrink-0">
+                  <CheckCircle className="w-3 h-3" /> Eligible
+                </span>
+              </div>
+              {docs.length > 0 && (
+                <div className="mt-2 pt-2 border-t border-gray-100">
+                  <p className="text-xs font-semibold text-gray-600 mb-1.5">Documents required to apply:</p>
+                  <ul className="space-y-1">
+                    {docs.map((doc, i) => (
+                      <li key={i} className="flex items-start gap-1.5 text-xs text-gray-600">
+                        <span className="mt-1 w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
+                        {doc}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          );
+        };
+
+        if (eligible.length === 0) {
+          return (
+            <div className="mt-6 text-center py-12 bg-white rounded-xl border border-gray-200">
               <XCircle className="w-10 h-10 text-gray-300 mx-auto mb-3" />
               <p className="font-medium text-gray-700">No eligible schemes found</p>
               <p className="text-sm text-gray-400 mt-1">Try updating your profile details or checking with different inputs.</p>
             </div>
-          ) : (
-            <>
-              <div className="flex items-center gap-2 mb-4">
-                <CheckCircle className="w-5 h-5 text-green-600" />
-                <h2 className="text-base font-semibold text-gray-900">
-                  You are eligible for {allResults.filter(r => r.is_eligible).length} scheme{allResults.filter(r => r.is_eligible).length !== 1 ? 's' : ''}
-                </h2>
+          );
+        }
+
+        return (
+          <div className="mt-6 space-y-6">
+            {/* Top 5 Section */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">
+                  <Trophy className="w-4 h-4 text-amber-500" />
+                  <span className="text-sm font-semibold text-amber-800">Top 5 High-Impact Schemes For You</span>
+                </div>
               </div>
               <div className="space-y-3">
-                {allResults.filter(r => r.is_eligible).map(r => (
-                  <div key={r.program_id} className="bg-white rounded-lg border border-green-200 px-4 py-3 hover:shadow-sm transition-shadow">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-medium text-gray-900">{r.program_name}</p>
-                        <p className="text-xs text-gray-500 mt-0.5">{r.category}{r.state && r.state !== 'All India' ? ` · ${r.state}` : ''}</p>
-                      {r.official_link && (() => {
-                        const link = r.official_link.startsWith('http') ? r.official_link : `https://${r.official_link.replace(/^\/+/, '')}`;
-                        return <a href={link} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">Apply Online →</a>;
-                      })()}
-                      </div>
-                      <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-100 px-2.5 py-1 rounded-full flex-shrink-0 ml-3">
-                        <CheckCircle className="w-3 h-3" /> Eligible
-                      </span>
-                    </div>
-                    {r.documents_required && (() => {
-                      try {
-                        const docs: string[] = JSON.parse(r.documents_required);
-                        if (docs.length === 0) return null;
-                        return (
-                          <div className="mt-2 pt-2 border-t border-gray-100">
-                            <p className="text-xs font-semibold text-gray-600 mb-1.5">Documents required to apply:</p>
-                            <ul className="space-y-1">
-                              {docs.map((doc, i) => (
-                                <li key={i} className="flex items-start gap-1.5 text-xs text-gray-600">
-                                  <span className="mt-1 w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
-                                  {doc}
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        );
-                      } catch { return null; }
-                    })()}
-                  </div>
+                {top5.map((r, i) => (
+                  <SchemeCard key={r.program_id} r={r} rank={i} />
                 ))}
               </div>
-            </>
-          )}
-        </div>
-      )}
+            </div>
+
+            {/* View All toggle */}
+            {rest.length > 0 && (
+              <div>
+                <button
+                  onClick={() => setShowAll(v => !v)}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                >
+                  <List className="w-4 h-4" />
+                  {showAll
+                    ? 'Hide remaining schemes'
+                    : `View all ${eligible.length} eligible schemes (${rest.length} more)`}
+                  {showAll ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                </button>
+
+                {showAll && (
+                  <div className="mt-3 space-y-3">
+                    <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">All eligible schemes</p>
+                    {rest.map(r => (
+                      <SchemeCard key={r.program_id} r={r} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Summary line */}
+            <p className="text-xs text-gray-400 text-center">
+              {eligible.length} scheme{eligible.length !== 1 ? 's' : ''} found eligible · showing top 5 by estimated benefit
+            </p>
+          </div>
+        );
+      })()}
     </div>
   );
 }

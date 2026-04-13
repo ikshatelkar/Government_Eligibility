@@ -1,23 +1,34 @@
 """
 Weekly Scheme Restore Script
-Runs every Saturday - wipes all existing schemes from the database
-and performs a full fresh import from the MyScheme API.
+Runs every Saturday at 02:00 — wipes all existing schemes and re-imports
+the full dataset from the pre-scraped GitHub CSV (~3,300 schemes).
 
 Usage:
     python restore_schemes.py
 
 Scheduled automatically by Windows Task Scheduler (setup_scheduler.ps1).
+
+Requirements:
+    pip install requests mysql-connector-python python-dotenv pandas
 """
 
 import os
 import sys
+import re
+import io
+import ast
 import json
-import time
 import logging
 import requests
 import mysql.connector
 from datetime import datetime
 from dotenv import load_dotenv
+
+try:
+    import pandas as pd
+except ImportError:
+    print("pandas is required: pip install pandas")
+    sys.exit(1)
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', 'backend', '.env'))
 
@@ -35,210 +46,194 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
+CSV_URL = (
+    "https://raw.githubusercontent.com/Bhagawat8/"
+    "Government-Scheme-QnA-using-RAG-on-MyScheme-Portal/main/"
+    "cleaned_my_scheme_data_fixed.csv"
+)
+
 DB_CONFIG = {
-    'host': os.getenv('DB_HOST', 'localhost'),
-    'port': int(os.getenv('DB_PORT', 3306)),
-    'user': os.getenv('DB_USER', 'root'),
+    'host':     os.getenv('DB_HOST', 'localhost'),
+    'port':     int(os.getenv('DB_PORT', 3306)),
+    'user':     os.getenv('DB_USER', 'root'),
     'password': os.getenv('DB_PASSWORD', ''),
     'database': os.getenv('DB_NAME', 'gov_eligibility_db'),
 }
 
-MYSCHEME_API = "https://api.myscheme.gov.in/search/v4/schemes"
-HEADERS = {
-    "Accept": "application/json",
-    "Accept-Language": "en",
-}
+CATEGORY_RULES = [
+    ('Women & Child',      ['women', 'woman', 'girl', 'child', 'mother', 'pregnant',
+                            'maternity', 'widow', 'beti', 'ladli']),
+    ('Education',          ['education', 'student', 'scholarship', 'school', 'college',
+                            'university', 'learning', 'study', 'merit', 'fellowship']),
+    ('Health',             ['health', 'medical', 'hospital', 'medicine', 'doctor',
+                            'patient', 'disease', 'wellness', 'ayushman', 'nutrition']),
+    ('Agriculture',        ['farmer', 'agriculture', 'crop', 'farm', 'kisan', 'soil',
+                            'irrigation', 'rural', 'livestock', 'fishermen', 'fishing']),
+    ('Employment',         ['employment', 'job', 'skill', 'training', 'entrepreneur',
+                            'business', 'startup', 'msme', 'labour', 'worker', 'vocational']),
+    ('Housing',            ['housing', 'home', 'shelter', 'house', 'awas', 'construction']),
+    ('Disability Support', ['disability', 'disabled', 'pwd', 'handicap', 'divyangjan',
+                            'divyang', 'specially abled']),
+    ('Financial Inclusion',['financial', 'insurance', 'banking', 'pension', 'savings',
+                            'loan', 'credit', 'jan dhan', 'mudra', 'suraksha']),
+]
 
-CATEGORY_MAP = {
-    "Agriculture,Rural & Environment": "Agriculture",
-    "Banking,Financial Services and Insurance": "Financial Inclusion",
-    "Business & Entrepreneurship": "Employment",
-    "Education & Learning": "Education",
-    "Health & Wellness": "Health",
-    "Housing & Shelter": "Housing",
-    "Public Safety,Law & Justice": "Social Welfare",
-    "Science, IT & Communications": "Employment",
-    "Skills & Employment": "Employment",
-    "Social welfare & Empowerment": "Social Welfare",
-    "Sports & Culture": "Social Welfare",
-    "Transport & Infrastructure": "Social Welfare",
-    "Travel & Tourism": "Social Welfare",
-    "Utility & Sanitation": "Social Welfare",
-    "Women and Child": "Women & Child",
-    "Disability": "Disability Support",
-}
+CENTRAL_STATES = {'central', 'central government', 'india', 'national', '', 'nan'}
 
-
-def map_category(raw_category):
-    for key, val in CATEGORY_MAP.items():
-        if key.lower() in (raw_category or '').lower():
-            return val
-    return "Social Welfare"
+INSERT_SQL = """
+    INSERT INTO programs
+      (name, description, category, min_age, max_age, min_income, max_income,
+       employment_status, disability_required, citizenship_required,
+       gender, caste, state, official_link, documents_required,
+       external_id, source_api, last_synced_at)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+"""
 
 
-def fetch_schemes(page=0, size=50):
-    params = {
-        "lang": "en",
-        "keyword": "",
-        "schemeType": "Central",
-        "page": page,
-        "size": size,
+# ─── Parsing helpers (mirrors import_from_csv.py) ─────────────────────────────
+
+def infer_category(tags_str: str) -> str:
+    try:
+        tags = ast.literal_eval(tags_str) if tags_str and str(tags_str) != 'nan' else []
+    except Exception:
+        tags = [str(tags_str)]
+    text = ' '.join(str(t) for t in tags).lower()
+    for cat, keywords in CATEGORY_RULES:
+        if any(kw in text for kw in keywords):
+            return cat
+    return 'Social Welfare'
+
+
+def extract_state(states_str: str) -> str:
+    try:
+        if not states_str or str(states_str) == 'nan':
+            return 'All India'
+        items = ast.literal_eval(str(states_str))
+        if not items:
+            return 'All India'
+        first = str(items[0]).strip()
+        if first.lower() in CENTRAL_STATES or first.lower() in ('all states', 'pan india'):
+            return 'All India'
+        return first[:100]
+    except Exception:
+        s = str(states_str).strip().strip("[]'\"")
+        if not s or s.lower() in CENTRAL_STATES:
+            return 'All India'
+        return s[:100]
+
+
+def parse_eligibility(text: str) -> dict:
+    result = {
+        'gender': 'any', 'min_age': 0, 'max_age': 120,
+        'max_income': 99999999, 'caste': 'any', 'disability_required': False,
     }
+    if not text or str(text) == 'nan':
+        return result
+    t = str(text).lower()
+
+    if any(w in t for w in ['female', 'woman', 'women', 'girl', 'widow', 'mother']):
+        result['gender'] = 'female'
+    elif re.search(r'\b(male|man|men|boy)\b', t):
+        result['gender'] = 'male'
+
+    age_range = re.search(r'(\d{1,3})\s*(?:and|to|-)\s*(\d{1,3})\s*year', t)
+    if age_range:
+        a, b = int(age_range.group(1)), int(age_range.group(2))
+        result['min_age'], result['max_age'] = min(a, b), max(a, b)
+    else:
+        min_m = re.search(
+            r'(?:minimum|min|above|at least|completed)\s*(?:age\s*(?:of\s*)?)?(\d{1,3})', t)
+        max_m = re.search(
+            r'(?:maximum|max|below|up to|not (?:more|exceed)\w*)\s*(?:age\s*(?:of\s*)?)?(\d{1,3})', t)
+        if min_m:
+            result['min_age'] = int(min_m.group(1))
+        if max_m:
+            result['max_age'] = int(max_m.group(1))
+
+    inc_m = re.search(r'(?:income|earning)[^\d]*?(\d[\d,\.]*)\s*(lakh|lac|thousand)?', t)
+    if inc_m:
+        try:
+            val = float(inc_m.group(1).replace(',', ''))
+            suf = (inc_m.group(2) or '').lower()
+            if 'lakh' in suf or 'lac' in suf:
+                val *= 100_000
+            elif 'thousand' in suf:
+                val *= 1_000
+            result['max_income'] = int(val)
+        except Exception:
+            pass
+
+    if re.search(r'\bsc\s*/?\s*st\b', t):
+        result['caste'] = 'SC'
+    elif re.search(r'\bsc\b', t):
+        result['caste'] = 'SC'
+    elif re.search(r'\bst\b', t):
+        result['caste'] = 'ST'
+    elif re.search(r'\bobc\b', t):
+        result['caste'] = 'OBC'
+
+    if any(w in t for w in ['disabilit', 'disabled', 'pwd', 'handicap', 'divyang']):
+        result['disability_required'] = True
+
+    return result
+
+
+def parse_documents(docs_text: str) -> str:
+    if not docs_text or str(docs_text) == 'nan':
+        return json.dumps(['Aadhaar Card'])
     try:
-        response = requests.get(MYSCHEME_API, headers=HEADERS, params=params, timeout=15)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            log.warning(f"API error {response.status_code}: {response.text[:200]}")
-            return None
+        items = ast.literal_eval(str(docs_text))
+        if isinstance(items, list):
+            docs = [str(d).strip() for d in items if str(d).strip() and len(str(d).strip()) > 3]
+            docs = docs[:15]
+            if not docs:
+                docs = ['Aadhaar Card']
+            elif not any('aadhaar' in d.lower() for d in docs):
+                docs.insert(0, 'Aadhaar Card')
+            return json.dumps(docs)
+    except Exception:
+        pass
+    lines = re.split(r'\n|•|\*\s+|\d+\.\s+', str(docs_text))
+    docs = []
+    for line in lines:
+        line = re.sub(r'\*+|\[|\]|&[a-z]+;|&#\d+;|`', '', line).strip(' -–>')
+        if 4 < len(line) < 200:
+            docs.append(line)
+    docs = docs[:15]
+    if not docs:
+        docs = ['Aadhaar Card']
+    elif not any('aadhaar' in d.lower() for d in docs):
+        docs.insert(0, 'Aadhaar Card')
+    return json.dumps(docs)
+
+
+# ─── Download ─────────────────────────────────────────────────────────────────
+
+def download_csv() -> bytes | None:
+    log.info(f"Downloading latest CSV from GitHub ...")
+    try:
+        resp = requests.get(CSV_URL, timeout=180, stream=True)
+        resp.raise_for_status()
+        total = int(resp.headers.get('content-length', 0))
+        chunks, downloaded = [], 0
+        for chunk in resp.iter_content(chunk_size=131072):
+            chunks.append(chunk)
+            downloaded += len(chunk)
+            if total and downloaded % (1024 * 512) < 131072:
+                log.info(f"  {downloaded // 1024} / {total // 1024} KB")
+        content = b''.join(chunks)
+        log.info(f"  Download complete: {len(content) // 1024} KB")
+        return content
     except Exception as e:
-        log.error(f"Request failed: {e}")
+        log.error(f"Download failed: {e}")
         return None
 
 
-def parse_age(value, default):
-    try:
-        v = str(value).strip().replace('+', '').replace('years', '').strip()
-        return int(v) if v.isdigit() else default
-    except Exception:
-        return default
-
-
-def parse_income(value, default):
-    try:
-        v = str(value).replace(',', '').replace('₹', '').replace('Rs', '').strip()
-        v = v.split()[0]
-        if 'lakh' in value.lower() or 'lac' in value.lower():
-            return int(float(v) * 100000)
-        return int(float(v))
-    except Exception:
-        return default
-
-
-def extract_scheme_data(scheme):
-    try:
-        details = scheme.get('schemeContent', {}) or {}
-        name = scheme.get('schemeName', '') or details.get('title', '')
-        if not name:
-            return None
-
-        description = details.get('objective', '') or details.get('description', '') or name
-        raw_category = ''
-        tags = scheme.get('tags', []) or []
-        if tags:
-            raw_category = tags[0] if isinstance(tags[0], str) else tags[0].get('name', '')
-        category = map_category(raw_category)
-
-        # Women & Child schemes are female-only by nature
-        if category == 'Women & Child':
-            gender = 'female'
-
-        eligibility = details.get('eligibility', []) or []
-        min_age, max_age = 0, 120
-        max_income = 99999999
-        gender = 'any'
-        caste = 'any'
-        disability_required = False
-
-        for criterion in eligibility:
-            field = str(criterion.get('field', '')).lower()
-            value = str(criterion.get('value', ''))
-
-            if 'age' in field:
-                if 'min' in field:
-                    min_age = parse_age(value, 0)
-                elif 'max' in field:
-                    max_age = parse_age(value, 120)
-
-            if 'income' in field or 'annual' in field:
-                max_income = parse_income(value, 99999999)
-
-            if 'gender' in field:
-                val_lower = value.lower()
-                if 'female' in val_lower or 'woman' in val_lower or 'girl' in val_lower:
-                    gender = 'female'
-                elif 'male' in val_lower or 'man' in val_lower or 'boy' in val_lower:
-                    gender = 'male'
-
-            if 'caste' in field or 'category' in field:
-                val_upper = value.upper()
-                if 'SC' in val_upper:
-                    caste = 'SC'
-                elif 'ST' in val_upper:
-                    caste = 'ST'
-                elif 'OBC' in val_upper:
-                    caste = 'OBC'
-
-            if 'disab' in field or 'pwd' in field or 'handicap' in field:
-                disability_required = True
-
-        official_link = scheme.get('schemeUrl', '') or ''
-        # Ensure link has proper protocol
-        if official_link and not official_link.startswith('http'):
-            official_link = 'https://' + official_link.lstrip('/')
-        state = scheme.get('state', 'All India') or 'All India'
-        if not state or state.lower() in ['central', 'india', 'national']:
-            state = 'All India'
-
-        # Extract document requirements from scheme content
-        raw_docs = details.get('documents', []) or details.get('requiredDocuments', []) or []
-        doc_list = []
-        for doc in raw_docs:
-            if isinstance(doc, str) and doc.strip():
-                doc_list.append(doc.strip())
-            elif isinstance(doc, dict):
-                label = doc.get('documentName', '') or doc.get('name', '') or doc.get('label', '')
-                if label:
-                    doc_list.append(label.strip())
-        if not any('aadhaar' in d.lower() for d in doc_list):
-            doc_list.insert(0, 'Aadhaar Card')
-        documents_required = json.dumps(doc_list) if doc_list else None
-
-        return {
-            'name': name[:250],
-            'description': description[:2000],
-            'category': category,
-            'min_age': min_age,
-            'max_age': max_age,
-            'min_income': 0,
-            'max_income': max_income,
-            'employment_status': 'any',
-            'disability_required': disability_required,
-            'citizenship_required': True,
-            'gender': gender,
-            'caste': caste,
-            'state': state[:100],
-            'official_link': official_link[:500] if official_link else None,
-            'documents_required': documents_required,
-        }
-    except Exception as e:
-        log.warning(f"Parse error: {e}")
-        return None
-
-
-def insert_scheme(cursor, scheme_data):
-    sql = """
-        INSERT INTO programs
-          (name, description, category, min_age, max_age, min_income, max_income,
-           employment_status, disability_required, citizenship_required,
-           gender, caste, state, official_link, documents_required)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-    """
-    cursor.execute(sql, (
-        scheme_data['name'], scheme_data['description'], scheme_data['category'],
-        scheme_data['min_age'], scheme_data['max_age'],
-        scheme_data['min_income'], scheme_data['max_income'],
-        scheme_data['employment_status'],
-        scheme_data['disability_required'], scheme_data['citizenship_required'],
-        scheme_data['gender'], scheme_data['caste'],
-        scheme_data['state'], scheme_data['official_link'],
-        scheme_data.get('documents_required'),
-    ))
-
+# ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
     log.info("=" * 60)
-    log.info("WEEKLY RESTORE — MyScheme Full Re-Import")
+    log.info("WEEKLY RESTORE — Full re-import from MyScheme CSV")
     log.info(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     log.info("=" * 60)
 
@@ -250,55 +245,95 @@ def main():
         log.error(f"MySQL connection failed: {e}")
         sys.exit(1)
 
-    # Wipe all existing schemes before fresh import
-    log.info("Wiping existing schemes from 'programs' table...")
+    csv_data = download_csv()
+    if csv_data is None:
+        cursor.close()
+        conn.close()
+        sys.exit(1)
+
+    log.info("Parsing CSV ...")
+    try:
+        df = pd.read_csv(io.BytesIO(csv_data), encoding='utf-8', low_memory=False)
+        if 'error' in df.columns:
+            df = df[df['error'].isna()].reset_index(drop=True)
+        log.info(f"Loaded {len(df)} valid rows")
+    except Exception as e:
+        log.error(f"Failed to parse CSV: {e}")
+        cursor.close()
+        conn.close()
+        sys.exit(1)
+
+    log.info("Wiping existing schemes from 'programs' table ...")
     cursor.execute("DELETE FROM programs")
     conn.commit()
-    log.info("Table cleared. Starting full re-import...")
+    log.info("Table cleared. Starting full re-import ...")
 
-    total_inserted = 0
-    total_failed = 0
-    page = 0
-    max_pages = 20
+    inserted, errors = 0, 0
+    for i, row in df.iterrows():
+        try:
+            name = str(row.get('scheme_name', '') or '').strip()
+            if not name or name == 'nan':
+                continue
 
-    while page < max_pages:
-        log.info(f"Fetching page {page + 1}...")
-        data = fetch_schemes(page=page, size=50)
+            raw_desc = row.get('details', '') or row.get('benefits', '') or name
+            description = re.sub(r'&[a-z]+;|&#\d+;|&amp;|\ufffd', ' ', str(raw_desc)).strip()
+            if not description or description == 'nan':
+                description = name
+            description = description[:2000]
 
-        if not data:
-            log.warning("No data returned. Stopping.")
-            break
+            category = infer_category(str(row.get('tags', '') or ''))
+            state = extract_state(str(row.get('target_beneficiaries_states', '') or ''))
 
-        schemes = data.get('data', {}).get('schemes', []) or data.get('schemes', []) or []
-        if not schemes:
-            log.info("No more schemes found. Import complete.")
-            break
+            # eligibility is stored as a Python list string
+            elig_raw = str(row.get('eligibility', '') or '')
+            try:
+                elig_items = ast.literal_eval(elig_raw)
+                elig_text = ' '.join(str(x) for x in elig_items) if isinstance(elig_items, list) else elig_raw
+            except Exception:
+                elig_text = elig_raw
+            elig = parse_eligibility(elig_text)
 
-        log.info(f"  Got {len(schemes)} schemes from API")
+            if category == 'Women & Child':
+                elig['gender'] = 'female'
+            if category == 'Disability Support':
+                elig['disability_required'] = True
 
-        for scheme in schemes:
-            parsed = extract_scheme_data(scheme)
-            if parsed:
-                try:
-                    insert_scheme(cursor, parsed)
-                    total_inserted += 1
-                except Exception as e:
-                    log.warning(f"  Insert error for '{parsed.get('name', 'unknown')}': {e}")
-                    total_failed += 1
+            source_url = str(row.get('source_url', '') or '').strip()
+            if source_url == 'nan':
+                source_url = ''
+            external_id = source_url.rstrip('/').split('/')[-1] if source_url else None
+            documents_required = parse_documents(str(row.get('documents_required', '') or ''))
 
-        conn.commit()
-        log.info(f"  Committed. Running total: {total_inserted} inserted, {total_failed} failed")
-        page += 1
-        time.sleep(0.5)
+            cursor.execute(INSERT_SQL, (
+                name[:250], description, category,
+                elig['min_age'], elig['max_age'], 0, elig['max_income'],
+                'any', elig['disability_required'], True,
+                elig['gender'], elig['caste'], state,
+                source_url[:500] if source_url else None,
+                documents_required,
+                external_id[:150] if external_id else None,
+                'myscheme_csv',
+            ))
+            inserted += 1
 
+            if (i + 1) % 200 == 0:
+                conn.commit()
+                log.info(f"  Progress: {i + 1}/{len(df)}  |  {inserted} inserted")
+
+        except Exception as e:
+            log.warning(f"  Row {i} error: {e}")
+            errors += 1
+
+    conn.commit()
     cursor.close()
     conn.close()
 
     log.info("\n" + "=" * 60)
-    log.info("RESTORE COMPLETE")
-    log.info(f"  Total inserted : {total_inserted}")
-    log.info(f"  Total failed   : {total_failed}")
-    log.info(f"  Log saved to   : {log_file}")
+    log.info("WEEKLY RESTORE COMPLETE")
+    log.info(f"  CSV rows    : {len(df)}")
+    log.info(f"  Inserted    : {inserted}")
+    log.info(f"  Errors      : {errors}")
+    log.info(f"  Log saved to: {log_file}")
     log.info("=" * 60)
 
 
