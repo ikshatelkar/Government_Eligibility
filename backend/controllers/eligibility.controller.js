@@ -126,6 +126,8 @@ const fallbackEligibilityCheck = (program, data) => {
   // ── Keyword-based age safety ──────────────────────────────────────────────
   const schemeText = ((program.name || '') + ' ' + (program.description || '')).toLowerCase();
 
+  // ── UPPER bound rules (too old for a scheme) ──────────────────────────────
+
   // Education category — for students/young adults only
   if (program.category === 'Education' && program.min_age === 0 && program.max_age === 120 && age > 35) return false;
 
@@ -156,7 +158,60 @@ const fallbackEligibilityCheck = (program, data) => {
   // Young entrepreneur
   if (program.max_age === 120 && age > 45 && /young entrepreneur|youth entrepreneurship/.test(schemeText)) return false;
 
-  return true;
+  // ── LOWER bound rules (too young for a scheme) ────────────────────────────
+  // Applied when DB min_age is 0 (not explicitly set) but keyword implies a minimum.
+
+  // Overseas / study abroad / foreign university — must be at least 18
+  if (
+    program.min_age === 0 && age < 18 &&
+    /\boverseas\b|\bstudy abroad\b|\bforeign university\b|\babroad\b|\bvideshi\b|\bvidesha\b/.test(schemeText)
+  ) return false;
+
+  // Fellowship / research / professorship — postgraduate level (21+)
+  if (
+    program.min_age === 0 && age < 21 &&
+    /\bfellowship\b|\bresearch fellow\b|\bchair professor\b|\bdistinguished.*professor\b|\bpost.?doctoral\b|\bprofessor.*scheme\b|\bfaculty.*scheme\b/.test(schemeText)
+  ) return false;
+
+  // Doctoral / PhD / Masters / postgraduate — age 20+
+  if (
+    program.min_age === 0 && age < 20 &&
+    /\bdoctoral\b|\bphd\b|\bp\.h\.d\b|\bm\.tech\b|\bmba\b|\bm\.sc\b|\bm\.a\b|\bpost.?graduation\b|\bpostgraduate\b|\bpost-graduate\b/.test(schemeText)
+  ) return false;
+
+  // AICTE — all schemes are for technical/higher education colleges (16+)
+  if (program.min_age === 0 && age < 15 && /\baicte\b/.test(schemeText)) return false;
+
+  // Graduation / undergraduate / degree / college / university level — age 15+
+  if (
+    program.min_age === 0 && age < 15 &&
+    /\bundergraduate\b|\bgraduation\b|\bdegree course\b|\bcollege\b|\buniversity\b|\bb\.tech\b|\bb\.e\.\b|\bbsc\b|\bba\b|\bllb\b|\bmbbs\b|\bmedical degree\b/.test(schemeText)
+  ) return false;
+
+  // Education loans and loan subsidies — typically 16+
+  if (
+    program.min_age === 0 && age < 15 &&
+    /education loan|educational loan|loan subsidy/.test(schemeText)
+  ) return false;
+
+  // Post-matric / 11th / 12th class scholarships — age 14+
+  if (
+    program.min_age === 0 && age < 14 &&
+    /post.?matric|postmatric|\b11th\b|\b12th\b|\bclass xi\b|\bclass xii\b|\bhigher secondary\b|\bintermediate.*class\b/.test(schemeText)
+  ) return false;
+
+  // Vocational training / ITI / skill training — age 14+
+  if (
+    program.min_age === 0 && age < 14 &&
+    /vocational training|\biti\b|polytechnic|industrial training institute|skill.*training/.test(schemeText)
+  ) return false;
+
+  // Employment / self-employment / startup schemes — age 18+
+  if (
+    program.min_age === 0 && age < 18 &&
+    program.category === 'Employment' &&
+    !/\bchild\b|\bchildren\b|\bscholarship\b/.test(schemeText)
+  ) return false;
 };
 
 const getMyResults = async (req, res) => {
