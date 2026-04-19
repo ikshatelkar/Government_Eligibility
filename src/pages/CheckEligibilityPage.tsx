@@ -20,6 +20,7 @@ interface AllResult {
   is_eligible: boolean;
   official_link?: string;
   state?: string;
+  caste?: string;
   documents_required?: string;
 }
 
@@ -356,6 +357,7 @@ export default function CheckEligibilityPage() {
         const eligible = allResults.filter(r => r.is_eligible);
 
         // Score each eligible scheme by likely benefit impact
+        const userCaste = form.caste; // e.g. 'SC', 'OBC', 'ST', 'General'
         const scoreScheme = (r: AllResult): number => {
           let score = 0;
           const text = ((r.program_name || '') + ' ' + (r.category || '')).toLowerCase();
@@ -366,6 +368,8 @@ export default function CheckEligibilityPage() {
           if (['Financial Inclusion', 'Disability Support'].includes(r.category)) score += 15;
           // Has documents (scheme is actionable and detailed)
           if (r.documents_required) score += 15;
+          // Caste-targeted schemes for the user's own caste — big boost so they surface prominently
+          if (r.caste && r.caste !== 'any' && r.caste === userCaste) score += 50;
           // State-specific is more targeted / valuable
           if (r.state && r.state !== 'All India') score += 10;
           // Has an official link

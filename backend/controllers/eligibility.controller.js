@@ -235,6 +235,8 @@ const fallbackEligibilityCheck = (program, data) => {
     program.category === 'Employment' &&
     !/\bchild\b|\bchildren\b|\bscholarship\b/.test(schemeText)
   ) return false;
+
+  return true;
 };
 
 const getMyResults = async (req, res) => {
@@ -266,6 +268,7 @@ const checkAllPrograms = async (req, res) => {
       category: program.category,
       official_link: program.official_link,
       state: program.state,
+      caste: program.caste,
       documents_required: program.documents_required,
       is_eligible: fallbackEligibilityCheck(program, citizenData),
     }));
