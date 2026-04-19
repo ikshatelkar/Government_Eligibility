@@ -103,10 +103,16 @@ const fallbackEligibilityCheck = (program, data) => {
   if (program.caste !== 'any' && caste && caste !== program.caste) return false;
 
   // ── State filter ──────────────────────────────────────────────────────────
+  // "All India" and "All States" both mean the scheme applies nationally.
+  const NATIONAL = ['all india', 'all states', 'all', 'central', 'national', ''];
+  const progState = (program.state || '').toLowerCase().trim();
+  const userState = (state || '').toLowerCase().trim();
   if (
-    program.state && program.state !== 'All India' &&
-    state && state !== 'All India' &&
-    program.state.toLowerCase().trim() !== state.toLowerCase().trim()
+    progState &&
+    !NATIONAL.includes(progState) &&
+    userState &&
+    !NATIONAL.includes(userState) &&
+    progState !== userState
   ) return false;
 
   // ── Category-level safety ─────────────────────────────────────────────────
