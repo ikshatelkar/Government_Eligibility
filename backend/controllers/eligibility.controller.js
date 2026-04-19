@@ -110,7 +110,8 @@ const fallbackEligibilityCheck = (program, data) => {
   ) return false;
 
   // ── Category-level safety ─────────────────────────────────────────────────
-  if (program.category === 'Women & Child' && gender && gender !== 'female') return false;
+  // Women & Child: adult males (18+) are excluded, but children of any gender are eligible
+  if (program.category === 'Women & Child' && age >= 18 && gender && gender !== 'female') return false;
   if (program.category === 'Disability Support' && !has_disability) return false;
 
   // ── Occupation filter ─────────────────────────────────────────────────────

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { eligibilityApi, programsApi } from '../services/api';
 import { toast } from 'sonner';
-import { CheckCircle, XCircle, Loader2, ChevronDown, Trophy, ChevronUp, List } from 'lucide-react';
+import { CheckCircle, XCircle, Loader2, ChevronDown, Trophy, ChevronUp, List, Baby } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 
 interface EligibilityResult {
@@ -31,6 +31,7 @@ export default function CheckEligibilityPage() {
   const [result, setResult] = useState<EligibilityResult | null>(null);
   const [allResults, setAllResults] = useState<AllResult[]>([]);
   const [showAll, setShowAll] = useState(false);
+  const [forChild, setForChild] = useState(false);
 
   const [form, setForm] = useState({
     age: '',
@@ -67,8 +68,9 @@ export default function CheckEligibilityPage() {
       const payload = {
         age: parseInt(form.age),
         income: parseFloat(form.income),
-        employment_status: form.employment_status,
-        occupation: form.occupation,
+        // In child mode: fix occupation/employment so adult filters don't block child schemes
+        employment_status: forChild ? 'unemployed' : form.employment_status,
+        occupation: forChild ? 'student' : form.occupation,
         has_disability: form.has_disability,
         is_citizen: form.is_citizen,
         gender: form.gender,
@@ -113,19 +115,45 @@ export default function CheckEligibilityPage() {
       </div>
 
       <form onSubmit={handleCheck} className="bg-white rounded-xl border border-gray-200 p-6 space-y-5">
+
+        {/* Child mode toggle */}
+        <div
+          onClick={() => setForChild(v => !v)}
+          className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors select-none ${
+            forChild
+              ? 'bg-blue-50 border-blue-300 text-blue-800'
+              : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+          }`}
+        >
+          <div className={`w-9 h-5 rounded-full relative transition-colors flex-shrink-0 ${forChild ? 'bg-blue-500' : 'bg-gray-300'}`}>
+            <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${forChild ? 'translate-x-4' : 'translate-x-0.5'}`} />
+          </div>
+          <Baby className={`w-4 h-4 flex-shrink-0 ${forChild ? 'text-blue-600' : 'text-gray-400'}`} />
+          <div>
+            <p className="text-sm font-medium leading-none">Checking for a child (under 18)</p>
+            {forChild && (
+              <p className="text-xs text-blue-600 mt-1">Employment &amp; occupation fields hidden — child welfare &amp; education schemes enabled</p>
+            )}
+          </div>
+        </div>
+
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">Age</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+              {forChild ? "Child's Age" : 'Age'}
+            </label>
             <input
-              type="number" min="1" max="120" required
+              type="number" min="0" max="120" required
               value={form.age}
               onChange={e => setForm(p => ({ ...p, age: e.target.value }))}
-              placeholder="e.g. 35"
+              placeholder={forChild ? 'e.g. 5' : 'e.g. 35'}
               className="w-full px-3.5 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">Annual Income (₹)</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+              {forChild ? 'Family Annual Income (₹)' : 'Annual Income (₹)'}
+            </label>
             <input
               type="number" min="0" required
               value={form.income}
@@ -136,45 +164,50 @@ export default function CheckEligibilityPage() {
           </div>
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">Employment Status</label>
-          <div className="relative">
-            <select
-              value={form.employment_status}
-              onChange={e => setForm(p => ({ ...p, employment_status: e.target.value }))}
-              className="w-full appearance-none px-3.5 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-            >
-              <option value="employed">Employed</option>
-              <option value="unemployed">Unemployed</option>
-              <option value="self_employed">Self-Employed</option>
-              <option value="retired">Retired</option>
-            </select>
-            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-          </div>
-        </div>
+        {/* Only show employment/occupation for adults */}
+        {!forChild && (
+          <>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">Employment Status</label>
+              <div className="relative">
+                <select
+                  value={form.employment_status}
+                  onChange={e => setForm(p => ({ ...p, employment_status: e.target.value }))}
+                  className="w-full appearance-none px-3.5 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                >
+                  <option value="employed">Employed</option>
+                  <option value="unemployed">Unemployed</option>
+                  <option value="self_employed">Self-Employed</option>
+                  <option value="retired">Retired</option>
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+              </div>
+            </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">Occupation</label>
-          <div className="relative">
-            <select
-              value={form.occupation}
-              onChange={e => setForm(p => ({ ...p, occupation: e.target.value }))}
-              className="w-full appearance-none px-3.5 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-            >
-              <option value="farmer">Farmer / Agricultural Worker</option>
-              <option value="student">Student</option>
-              <option value="business">Business Owner / Entrepreneur</option>
-              <option value="street_vendor">Street Vendor</option>
-              <option value="unorganised_worker">Daily Wage / Unorganised Sector Worker</option>
-              <option value="armed_forces">Ex-Serviceman / Armed Forces</option>
-              <option value="government_employee">Government Employee</option>
-              <option value="private_employee">Private Sector Employee</option>
-              <option value="homemaker">Homemaker</option>
-              <option value="other">Other / Not Listed</option>
-            </select>
-            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-          </div>
-        </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">Occupation</label>
+              <div className="relative">
+                <select
+                  value={form.occupation}
+                  onChange={e => setForm(p => ({ ...p, occupation: e.target.value }))}
+                  className="w-full appearance-none px-3.5 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                >
+                  <option value="farmer">Farmer / Agricultural Worker</option>
+                  <option value="student">Student</option>
+                  <option value="business">Business Owner / Entrepreneur</option>
+                  <option value="street_vendor">Street Vendor</option>
+                  <option value="unorganised_worker">Daily Wage / Unorganised Sector Worker</option>
+                  <option value="armed_forces">Ex-Serviceman / Armed Forces</option>
+                  <option value="government_employee">Government Employee</option>
+                  <option value="private_employee">Private Sector Employee</option>
+                  <option value="homemaker">Homemaker</option>
+                  <option value="other">Other / Not Listed</option>
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+              </div>
+            </div>
+          </>
+        )}
 
         <div className="flex gap-6">
           <label className="flex items-center gap-2 cursor-pointer">
@@ -184,7 +217,7 @@ export default function CheckEligibilityPage() {
               onChange={e => setForm(p => ({ ...p, has_disability: e.target.checked }))}
               className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
             />
-            <span className="text-sm text-gray-700">Has Disability</span>
+            <span className="text-sm text-gray-700">{forChild ? 'Child has Disability' : 'Has Disability'}</span>
           </label>
           <label className="flex items-center gap-2 cursor-pointer">
             <input
