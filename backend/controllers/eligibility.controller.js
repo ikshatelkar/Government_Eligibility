@@ -115,12 +115,29 @@ const fallbackEligibilityCheck = (program, data) => {
   if (program.category === 'Disability Support' && !has_disability) return false;
 
   // ── Occupation filter ─────────────────────────────────────────────────────
-  // Uses the pre-classified target_occupations column (set by classify_schemes.cjs).
-  // Format: 'any' | 'farmer' | 'student,unorganised_worker' | etc.
+  // Each user occupation can access its own tagged schemes + related ones.
+  // street_vendor → also sees unorganised_worker schemes (they are informal workers)
+  // business → also sees unorganised_worker schemes (e.g. artisans running micro-business)
+  const OCC_ACCESS = {
+    farmer:              ['farmer'],
+    student:             ['student'],
+    business:            ['business', 'unorganised_worker'],
+    street_vendor:       ['street_vendor', 'unorganised_worker'],
+    unorganised_worker:  ['unorganised_worker'],
+    armed_forces:        ['armed_forces'],
+    government_employee: ['government_employee'],
+    private_employee:    ['private_employee'],
+    homemaker:           [],   // homemakers only see 'any' general schemes
+    other:               [],   // same for other
+  };
+
   const targetOcc = (program.target_occupations || 'any').trim();
   if (targetOcc !== 'any' && occupation) {
     const allowed = targetOcc.split(',').map(s => s.trim());
-    if (!allowed.includes(occupation) && !allowed.includes('any')) return false;
+    if (!allowed.includes('any')) {
+      const userTags = OCC_ACCESS[occupation] || [];
+      if (!userTags.some(t => allowed.includes(t))) return false;
+    }
   }
 
   // ── Keyword-based age safety ──────────────────────────────────────────────
