@@ -192,40 +192,8 @@ const checkEligibility = async (req, res) => {
     const program = programs[0];
     const citizenData = { age, income, employment_status, occupation, has_disability, is_citizen, gender, caste, state, education, location_type };
 
-    let ml_score = null;
-    let match_score = calculateMatchScore(program, citizenData);
-    let is_eligible = match_score >= 40;
-
-    // Try ML service for single-scheme check
-    try {
-      const fetch = (await import('node-fetch')).default;
-      const mlResponse = await fetch(`${process.env.ML_SERVICE_URL}/predict`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          age, income,
-          employment_status: employment_status || 'unemployed',
-          has_disability: has_disability ? 1 : 0,
-          is_citizen: is_citizen !== false ? 1 : 0,
-          gender: gender || 'any',
-          caste: caste || 'General',
-          occupation: occupation || 'other',
-          min_age: program.min_age, max_age: program.max_age,
-          min_income: program.min_income, max_income: program.max_income,
-          program_employment_status: program.employment_status,
-          required_occupation: program.required_occupation,
-          disability_required: program.disability_required ? 1 : 0,
-          citizenship_required: program.citizenship_required ? 1 : 0,
-          program_gender: program.gender,
-          program_caste: program.caste,
-        }),
-      });
-      if (mlResponse.ok) {
-        const mlData = await mlResponse.json();
-        ml_score = mlData.score;
-        is_eligible = mlData.eligible;
-      }
-    } catch (_) { /* use rule-based result */ }
+    const match_score = calculateMatchScore(program, citizenData);
+    const is_eligible = match_score >= 40;
 
     await db.execute(
       `INSERT INTO eligibility_results
@@ -234,7 +202,7 @@ const checkEligibility = async (req, res) => {
       [user_id, program_id, age, income, employment_status || null,
        occupation || 'other', has_disability || false, is_citizen !== false,
        gender || 'any', caste || 'General', state || 'All India',
-       ml_score, is_eligible]
+       match_score / 100, is_eligible]
     );
 
     res.json({
@@ -243,7 +211,6 @@ const checkEligibility = async (req, res) => {
       program_id: program.id,
       is_eligible,
       match_score,
-      ml_score,
       official_link: program.official_link,
       message: is_eligible
         ? `You are eligible for ${program.name}. (${match_score}% match)`

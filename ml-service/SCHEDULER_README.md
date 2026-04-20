@@ -7,7 +7,7 @@ Automatically keeps your government schemes database up to date from the [MySche
 | Task | Schedule | Script | What it does |
 |------|----------|--------|--------------|
 | Daily Update | Every day at **2:00 AM** | `fetch_schemes.py` | Pulls new schemes from API, inserts any that don't already exist (skips duplicates) |
-| Weekly Restore | Every **Saturday at 2:00 AM** | `restore_schemes.py` | Wipes all schemes and does a full clean re-import from scratch |
+| Weekly Full Sync | Every **Saturday at 2:00 AM** | `re_import_from_api.py` | Re-fetches all scheme details (age, caste, state, tags, ministry, etc.) from the API and updates the DB |
 
 Logs for every run are saved to `ml-service/logs/`.
 
@@ -56,10 +56,10 @@ cd ml-service
 python fetch_schemes.py
 ```
 
-**Weekly restore (full wipe + re-import):**
+**Weekly full re-import (update all scheme details from API):**
 ```bash
 cd ml-service
-python restore_schemes.py
+python re_import_from_api.py
 ```
 
 ---
@@ -69,7 +69,7 @@ python restore_schemes.py
 All runs write timestamped log files to `ml-service/logs/`:
 
 - `daily_YYYYMMDD_HHMMSS.log` — from daily updates
-- `restore_YYYYMMDD_HHMMSS.log` — from weekly restores
+- `reimport_YYYYMMDD_HHMMSS.log` — from weekly re-imports
 
 ---
 
@@ -78,7 +78,7 @@ All runs write timestamped log files to `ml-service/logs/`:
 ```
 ml-service/
 ├── fetch_schemes.py        ← Daily: insert new schemes (INSERT IGNORE)
-├── restore_schemes.py      ← Weekly: wipe + full re-import
+├── re_import_from_api.py   ← Weekly: update all scheme details from API
 ├── run_daily_update.bat    ← Called by Task Scheduler (daily)
 ├── run_weekly_restore.bat  ← Called by Task Scheduler (Saturday)
 ├── setup_scheduler.ps1     ← One-time setup script (run as Admin)
