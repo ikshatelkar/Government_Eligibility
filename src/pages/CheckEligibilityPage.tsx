@@ -18,10 +18,15 @@ interface AllResult {
   program_name: string;
   category: string;
   is_eligible: boolean;
+  match_score: number;
   official_link?: string;
   state?: string;
   caste?: string;
+  ministry?: string;
   documents_required?: string;
+  how_to_apply?: string;
+  benefits?: string;
+  tags?: string;
 }
 
 export default function CheckEligibilityPage() {
@@ -44,6 +49,8 @@ export default function CheckEligibilityPage() {
     gender: 'male',
     caste: 'General',
     state: 'All India',
+    education: 'any',
+    location_type: 'any',
   });
 
   const { data: programsData } = useQuery({
@@ -69,7 +76,6 @@ export default function CheckEligibilityPage() {
       const payload = {
         age: parseInt(form.age),
         income: parseFloat(form.income),
-        // In child mode: fix occupation/employment so adult filters don't block child schemes
         employment_status: forChild ? 'unemployed' : form.employment_status,
         occupation: forChild ? 'student' : form.occupation,
         has_disability: form.has_disability,
@@ -77,6 +83,8 @@ export default function CheckEligibilityPage() {
         gender: form.gender,
         caste: form.caste,
         state: form.state,
+        education: form.education,
+        location_type: form.location_type,
         ...(mode === 'single' && selectedProgram ? { program_id: parseInt(selectedProgram) } : {}),
       };
 
@@ -299,6 +307,39 @@ export default function CheckEligibilityPage() {
           </div>
         </div>
 
+        {/* Education & Location row */}
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">Education Level</label>
+            <div className="relative">
+              <select value={form.education} onChange={e => setForm(p => ({ ...p, education: e.target.value }))}
+                className="w-full appearance-none px-3.5 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                <option value="any">Select (optional)</option>
+                <option value="Illiterate">Illiterate / No formal education</option>
+                <option value="Primary">Primary (up to 5th)</option>
+                <option value="Secondary">Secondary (up to 10th)</option>
+                <option value="Higher Secondary">Higher Secondary (12th)</option>
+                <option value="Graduate">Graduate (Degree)</option>
+                <option value="Post-Graduate">Post-Graduate / PhD</option>
+              </select>
+              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">Area Type</label>
+            <div className="relative">
+              <select value={form.location_type} onChange={e => setForm(p => ({ ...p, location_type: e.target.value }))}
+                className="w-full appearance-none px-3.5 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                <option value="any">Select (optional)</option>
+                <option value="rural">Rural (Village / Gram Panchayat)</option>
+                <option value="semi-urban">Semi-Urban (Small town)</option>
+                <option value="urban">Urban (City / Metro)</option>
+              </select>
+              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+            </div>
+          </div>
+        </div>
+
         {mode === 'single' && (
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1.5">Select Program</label>
@@ -354,34 +395,27 @@ export default function CheckEligibilityPage() {
 
       {/* All results */}
       {allResults.length > 0 && (() => {
-        const eligible = allResults.filter(r => r.is_eligible);
+        // Use server-side match_score — sort descending, show >= 40
+        const eligible = [...allResults]
+          .filter(r => r.match_score >= 40)
+          .sort((a, b) => b.match_score - a.match_score);
 
-        // Score each eligible scheme by likely benefit impact
-        const userCaste = form.caste; // e.g. 'SC', 'OBC', 'ST', 'General'
-        const scoreScheme = (r: AllResult): number => {
-          let score = 0;
-          const text = ((r.program_name || '') + ' ' + (r.category || '')).toLowerCase();
-          // Financial benefit keywords
-          if (/stipend|pension|scholarship|assistance|subsidy|grant|compensation|allowance|insurance/.test(text)) score += 40;
-          // High-impact categories
-          if (['Health', 'Housing', 'Education'].includes(r.category)) score += 20;
-          if (['Financial Inclusion', 'Disability Support'].includes(r.category)) score += 15;
-          // Has documents (scheme is actionable and detailed)
-          if (r.documents_required) score += 15;
-          // Caste-targeted schemes for the user's own caste — big boost so they surface prominently
-          if (r.caste && r.caste !== 'any' && r.caste === userCaste) score += 50;
-          // State-specific is more targeted / valuable
-          if (r.state && r.state !== 'All India') score += 10;
-          // Has an official link
-          if (r.official_link) score += 5;
-          return score;
-        };
-
-        const scored = [...eligible].sort((a, b) => scoreScheme(b) - scoreScheme(a));
-        const top5 = scored.slice(0, 5);
-        const rest = scored.slice(5);
+        const top5 = eligible.slice(0, 5);
+        const rest  = eligible.slice(5);
 
         const rankEmojis = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'];
+
+        const ScoreBar = ({ score }: { score: number }) => {
+          const color = score >= 75 ? 'bg-green-500' : score >= 55 ? 'bg-blue-500' : 'bg-amber-400';
+          return (
+            <div className="flex items-center gap-2 mt-1.5">
+              <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${score}%` }} />
+              </div>
+              <span className="text-xs font-semibold text-gray-600 w-8 text-right">{score}%</span>
+            </div>
+          );
+        };
 
         const SchemeCard = ({ r, rank }: { r: AllResult; rank?: number }) => {
           const link = r.official_link
@@ -394,18 +428,21 @@ export default function CheckEligibilityPage() {
           return (
             <div className={`bg-white rounded-lg border px-4 py-3 hover:shadow-sm transition-shadow ${rank !== undefined ? 'border-amber-200' : 'border-green-200'}`}>
               <div className="flex items-start justify-between gap-3">
-                <div className="flex items-start gap-2 min-w-0">
+                <div className="flex items-start gap-2 min-w-0 flex-1">
                   {rank !== undefined && (
                     <span className="text-base leading-none mt-0.5 flex-shrink-0">{rankEmojis[rank]}</span>
                   )}
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-gray-900 leading-snug">{r.program_name}</p>
                     <p className="text-xs text-gray-500 mt-0.5">
-                      {r.category}{r.state && r.state !== 'All India' ? ` · ${r.state}` : ''}
+                      {r.category}
+                      {r.state && r.state !== 'All India' ? ` · ${r.state}` : ''}
+                      {r.ministry ? ` · ${r.ministry}` : ''}
                     </p>
+                    <ScoreBar score={r.match_score} />
                     {link && (
                       <a href={link} target="_blank" rel="noopener noreferrer"
-                        className="text-xs text-blue-600 hover:underline">
+                        className="text-xs text-blue-600 hover:underline mt-1 inline-block">
                         Apply Online →
                       </a>
                     )}
@@ -469,7 +506,7 @@ export default function CheckEligibilityPage() {
                   <List className="w-4 h-4" />
                   {showAll
                     ? 'Hide remaining schemes'
-                    : `View all ${eligible.length} eligible schemes (${rest.length} more)`}
+                    : `View all ${eligible.length} matched schemes (${rest.length} more)`}
                   {showAll ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                 </button>
 
@@ -486,7 +523,7 @@ export default function CheckEligibilityPage() {
 
             {/* Summary line */}
             <p className="text-xs text-gray-400 text-center">
-              {eligible.length} scheme{eligible.length !== 1 ? 's' : ''} found eligible · showing top 5 by estimated benefit
+              {eligible.length} scheme{eligible.length !== 1 ? 's' : ''} matched · sorted by match score · showing top 5
             </p>
           </div>
         );
